@@ -21,6 +21,9 @@ public class AiCommitMessagePlugin : GitPluginBase, IGitPluginForCommit
     private readonly PasswordSetting _apiKeySetting = new("AI API key", "API Key (optional for GitHub Copilot / Claude Code / OpenCode)", "");
     private readonly StringSetting _modelSetting = new("AI model override", "Model override (blank = provider default)", "");
 
+    private readonly StringSetting _youTrackUrlSetting = new("YouTrack URL", "YouTrack URL (by default: https://dev-track.fileforce.jp)", "");
+    private readonly PasswordSetting _youTrackTokenSetting = new("YouTrack API Token", "YouTrack API Token", "");
+
     private readonly List<IAiFeature> _features = [];
 
     public AiCommitMessagePlugin() : base(true)
@@ -72,6 +75,11 @@ public class AiCommitMessagePlugin : GitPluginBase, IGitPluginForCommit
         TextBox modelTextBox = new();
         _modelSetting.CustomControl = modelTextBox;
 
+        TextBox youTrackTokenTextBox = new() { PasswordChar = '\u25CF' };
+        _youTrackTokenSetting.CustomControl = youTrackTokenTextBox;
+        TextBox youTrackUrlTextBox = new();
+        _youTrackUrlSetting.CustomControl = youTrackUrlTextBox;
+
         providerCombo.SelectedIndexChanged += (_, _) => UpdateSettingsStatus(providerCombo, apiKeyTextBox, statusLabel, modelTextBox);
         apiKeyTextBox.TextChanged += (_, _) => UpdateSettingsStatus(providerCombo, apiKeyTextBox, statusLabel, modelTextBox);
 
@@ -92,6 +100,8 @@ public class AiCommitMessagePlugin : GitPluginBase, IGitPluginForCommit
             new PseudoSetting(statusLabel, "Status"),
             _apiKeySetting,
             _modelSetting,
+            _youTrackUrlSetting,
+            _youTrackTokenSetting
         ];
 
         foreach (IAiFeature feature in _features)
@@ -211,6 +221,8 @@ public class AiCommitMessagePlugin : GitPluginBase, IGitPluginForCommit
             ProviderSetting = _providerSetting,
             ApiKeySetting = _apiKeySetting,
             ModelSetting = _modelSetting,
+            YouTrackUrlSetting = _youTrackUrlSetting,
+            YouTrackTokenSetting = _youTrackTokenSetting
         };
 
         CommitMessageFeature commitFeature = new(host);

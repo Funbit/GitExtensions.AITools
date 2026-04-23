@@ -7,7 +7,7 @@ namespace GitExtensions.AITools.LlmProviders;
 internal sealed class OpenAiProvider : ILlmProvider
 {
     private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
-    private const string DefaultModel = "gpt-4o-mini";
+    private const string DefaultModel = "gpt-5.4-mini";
     private const string ApiUrl = "https://api.openai.com/v1/chat/completions";
 
     private readonly string _apiKey;
@@ -36,8 +36,9 @@ internal sealed class OpenAiProvider : ILlmProvider
         var body = new
         {
             model = _model,
-            max_tokens = 1024,
-            temperature = 0.3,
+            //max_tokens = 1024,
+            //temperature = 0.3,
+            reasoning_effort = "low",
             messages = new object[]
             {
                 new { role = "system", content = systemPrompt },

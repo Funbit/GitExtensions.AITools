@@ -8,7 +8,7 @@ internal sealed partial class CommitMessageGenerator
 {
     public const string DefaultCommitTypes = "feat, fix, refactor, docs, test, chore, style, perf, ci, build";
 
-    public const string DefaultSystemPrompt = """
+    /*public const string DefaultSystemPrompt = """
         You are a commit message generator. Given a git diff, produce ONLY the commit message text — nothing else.
         Follow the Conventional Commits 1.0.0 specification.
 
@@ -44,7 +44,7 @@ internal sealed partial class CommitMessageGenerator
         - Do NOT wrap the message in quotes or backticks.
         - Do NOT add git trailers (Co-Authored-By, Signed-off-by, etc.).
         - Do NOT start with "Here is", "Sure", or any conversational text.
-        """;
+        """;*/
 
     private readonly ILlmProvider _provider;
     private readonly string _systemPrompt;
@@ -53,11 +53,14 @@ internal sealed partial class CommitMessageGenerator
     {
         _provider = provider;
 
-        string basePrompt = DefaultSystemPrompt.Replace("{types}", commitTypes);
-
+        /*string basePrompt = DefaultSystemPrompt.Replace("{types}", commitTypes);
         _systemPrompt = string.IsNullOrWhiteSpace(customInstructions)
             ? basePrompt
-            : $"{basePrompt}\n\nADDITIONAL INSTRUCTIONS:\n{customInstructions}";
+            : $"{basePrompt}\n\nADDITIONAL INSTRUCTIONS:\n{customInstructions}";*/
+
+        _systemPrompt = string.IsNullOrWhiteSpace(customInstructions)
+            ? string.Empty
+            : customInstructions;
     }
 
     public async Task<string> GenerateAsync(IGitModule module, CancellationToken cancellationToken)

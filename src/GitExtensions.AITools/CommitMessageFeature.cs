@@ -15,7 +15,7 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
 
     private readonly AiToolsHost _host;
     private readonly BoolSetting _autoFillSetting = new("AI commit message auto-fill", "Auto-fill on stage/unstage", true);
-    private readonly StringSetting _commitTypesSetting = new("AI commit types", "Commit types (comma-separated)", CommitMessageGenerator.DefaultCommitTypes, true);
+    //private readonly StringSetting _commitTypesSetting = new("AI commit types", "Commit types (comma-separated)", CommitMessageGenerator.DefaultCommitTypes, true);
     private readonly MultilineStringSetting _customInstructionsSetting = new("AI custom instructions", "Custom instructions (appended to built-in prompt)", "");
 
     private readonly TranslationString _triggerText = new("AI: Generate commit message...");
@@ -51,12 +51,12 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
 
     public IEnumerable<ISetting> GetSettings()
     {
-        return [_autoFillSetting, _commitTypesSetting, _customInstructionsSetting];
+        return [_autoFillSetting, /*_commitTypesSetting,*/ _customInstructionsSetting];
     }
 
     public void Register(IGitUICommands gitUiCommands)
     {
-        MigrateEmptySetting(_commitTypesSetting, _host.Settings);
+        //MigrateEmptySetting(_commitTypesSetting, _host.Settings);
 
         gitUiCommands.RemoveCommitTemplate(LegacyTemplateKey);
 
@@ -99,7 +99,7 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
             return;
         }
 
-        string commitPrefixes = _commitTypesSetting.ValueOrDefault(_host.Settings);
+        //string commitPrefixes = _commitTypesSetting.ValueOrDefault(_host.Settings);
         string customInstructions = _customInstructionsSetting.ValueOrDefault(_host.Settings);
 
         _configError = null;
@@ -113,7 +113,7 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
         }
 
         _currentCustomInstructions = customInstructions;
-        _currentCommitTypes = commitPrefixes;
+        //_currentCommitTypes = commitPrefixes;
         _currentGitUiCommands = e.GitUICommands;
         _messageControl = null;
 
@@ -229,7 +229,7 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
         BeginGeneration(module, autoFill);
     }
 
-    private void BeginGeneration(IGitModule module, bool autoFill)
+    private async void BeginGeneration(IGitModule module, bool autoFill)
     {
         CancellationTokenSource cts = new();
         _cancellationTokenSource = cts;
@@ -246,10 +246,38 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
             SetCommitButtonsEnabled(false);
         }
 
+        string customInstructions = _currentCustomInstructions;
+
+        // ===========
+        // fetch YouTrack issues
+        string youTrackUrl = _host.YouTrackUrlSetting.ValueOrDefault(_host.Settings);
+        if (string.IsNullOrWhiteSpace(youTrackUrl))
+        {
+            youTrackUrl = "https://dev-track.fileforce.jp";
+        }
+        string youTrackToken = _host.YouTrackTokenSetting.ValueOrDefault(_host.Settings);
+        if (!string.IsNullOrWhiteSpace(youTrackToken))
+        {
+            try
+            {
+                string youTrackIssuesJson = await YouTrackIssueProvider
+                    .GetMyAssignedIssuesAsJsonAsync(youTrackUrl, youTrackToken).ConfigureAwait(false);
+                customInstructions += Environment.NewLine + Environment.NewLine +
+                                      "Currently active YouTrack tickets in JSON format (choose the one that fits):" +
+                                      Environment.NewLine +
+                                      youTrackIssuesJson;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"YouTrack Error: {ex}");
+            }
+        }
+        // ===========
+
         CommitMessageGenerator generator = new(
             _currentProvider!,
             _currentCommitTypes ?? CommitMessageGenerator.DefaultCommitTypes,
-            _currentCustomInstructions);
+            customInstructions);
 
         _pendingGeneration = Task.Run(() => GenerateSafeAsync(generator, module, ct), ct);
 

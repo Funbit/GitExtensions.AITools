@@ -19,6 +19,9 @@ internal sealed class AiToolsHost
     public required PasswordSetting ApiKeySetting { get; init; }
     public required StringSetting ModelSetting { get; init; }
 
+    public required StringSetting YouTrackUrlSetting { get; init; }
+    public required PasswordSetting YouTrackTokenSetting { get; init; }
+
     public ILlmProvider? CreateProvider(out string? configError)
     {
         string provider = ProviderSetting.ValueOrDefault(Settings) ?? LlmProviderFactory.Anthropic;
