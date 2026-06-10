@@ -1,11 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http.Headers;
-using System.Text;
+﻿using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading.Tasks;
 
 namespace GitExtensions.AITools
 {
@@ -61,9 +56,9 @@ namespace GitExtensions.AITools
 
             var requestUrl =
                 "/api/issues" +
-                "?query=for:%20me%20State:%20%7BIn%20Progress%7D" + // filter only personal "In Progress" tasks
+                "?query=for:%20me%20State%3a%20%7bIn%20Progress%7d%2c%20Review" + // filter only personal "In Progress" OR "Review" tasks
                 "&fields=idReadable,summary,description,tags(name)" +
-                "&$top=100";
+                "&$top=120";
 
             using var response = await httpClient.GetAsync(requestUrl);
             response.EnsureSuccessStatusCode();
