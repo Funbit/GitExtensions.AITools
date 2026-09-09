@@ -533,6 +533,11 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
         {
             return _cancelledMessage.Text;
         }
+        catch (InvalidOperationException ex)
+        {
+            Debug.WriteLine(ex.Message);
+            return string.Empty;
+        }
         catch (Exception ex)
         {
             return string.Format(_errorMessage.Text, ex.Message);
