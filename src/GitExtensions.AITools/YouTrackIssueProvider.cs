@@ -42,7 +42,7 @@ namespace GitExtensions.AITools
             public string? Name { get; set; }
         }
 
-        public static async Task<string> GetMyAssignedIssuesAsJsonAsync(string baseUrl, string token)
+        public static async Task<string> GetMyAssignedIssuesAsJsonAsync(string baseUrl, string token, CancellationToken cancellationToken = default)
         {
             using var httpClient = new HttpClient
             {
@@ -60,10 +60,10 @@ namespace GitExtensions.AITools
                 "&fields=idReadable,summary,description,tags(name)" +
                 "&$top=120";
 
-            using var response = await httpClient.GetAsync(requestUrl);
+            using var response = await httpClient.GetAsync(requestUrl, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var json = await response.Content.ReadAsStringAsync();
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
             var apiIssues = JsonSerializer.Deserialize<List<YouTrackIssueApiModel>>(
                 json,

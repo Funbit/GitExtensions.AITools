@@ -7,6 +7,7 @@ namespace GitExtensions.AITools;
 internal sealed partial class CommitMessageGenerator
 {
     public const string DefaultCommitTypes = "feat, fix, refactor, docs, test, chore, style, perf, ci, build";
+    public const string NoStagedChangesMessage = "[No staged changes found. Stage some changes before generating a commit message.]";
 
     /*public const string DefaultSystemPrompt = """
         You are a commit message generator. Given a git diff, produce ONLY the commit message text — nothing else.
@@ -69,7 +70,7 @@ internal sealed partial class CommitMessageGenerator
 
         if (string.IsNullOrWhiteSpace(diff))
         {
-            return "[No staged changes found. Stage some changes before generating a commit message.]";
+            return NoStagedChangesMessage;
         }
 
         string branch = module.GetSelectedBranch();

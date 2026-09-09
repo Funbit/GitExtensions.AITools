@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Add a Cancel AI button during commit message generation. Cancellation stops pending AI/YouTrack work, restores editing and commit buttons, and prevents late responses from overwriting the message.
+
+### Fixed
+
+- Clear the previous "No staged changes found" placeholder when cancelling AI generation, while preserving real commit drafts.
+
 ### Changed
 
 - Target Git Extensions 7.2.1 and .NET 10; AI Tools 6.x remains the version for Git Extensions 6.x.

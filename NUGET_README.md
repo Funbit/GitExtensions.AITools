@@ -6,6 +6,7 @@ AI-powered commit message generation for [Git Extensions](https://github.com/git
 
 - **AI-generated commit messages** — generates conventional commit messages from staged diffs
 - **Auto-fill mode** — automatically writes the commit message as you stage/unstage files
+- **Cancel AI** — stops pending generation and restores message editing and the commit buttons
 - **Commit template** — also available as a selectable template in the commit dialog dropdown
 - **Multiple LLM providers:**
   - Anthropic (Claude)
@@ -42,6 +43,7 @@ Open **Plugins → AI Tools** in Git Extensions to configure:
 
 - **With auto-fill enabled (default):** The commit message is generated automatically when you stage or unstage files and updates as you go.
 - **With auto-fill disabled:** Select the **"AI: Generate commit message"** template from the commit message dropdown to trigger generation.
+- **To cancel generation:** Click **Cancel AI** at the bottom of the commit button panel. The previous message is restored unless you have already edited it, and late responses are ignored. Auto-fill resumes on the next stage/unstage action.
 
 ## Links
 

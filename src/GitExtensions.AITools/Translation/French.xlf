@@ -21,6 +21,10 @@
         <source>[AI Commit Message Error: {0}]</source>
         <target>[Erreur de message de commit IA : {0}]</target>
       </trans-unit>
+      <trans-unit id="_cancelAiText.Text">
+        <source>Cancel AI</source>
+        <target>Annuler l'IA</target>
+      </trans-unit>
     </body>
   </file>
 </xliff>

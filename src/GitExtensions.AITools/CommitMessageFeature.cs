@@ -23,9 +23,10 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
     private readonly TranslationString _generatingMessage = new("Generating AI commit message...");
     private readonly TranslationString _cancelledMessage = new("[AI Commit Message: Generation was cancelled.]");
     private readonly TranslationString _errorMessage = new("[AI Commit Message Error: {0}]");
+    private readonly TranslationString _cancelAiText = new("Cancel AI");
 
     private CancellationTokenSource? _cancellationTokenSource;
-    private Task<string>? _pendingGeneration;
+    private SynchronizationContext? _uiContext;
     private ILlmProvider? _currentProvider;
     private string? _currentCustomInstructions;
     private string? _currentCommitTypes;
@@ -34,12 +35,16 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
     private bool _listeningToTextChanged;
     private Button? _commitButton;
     private Button? _commitAndPushButton;
+    private Button? _cancelAiButton;
+    private SplitContainer? _commitPanelSplitContainer;
+    private int _originalCommitPanelMinSize;
+    private string _messageBeforeGeneration = string.Empty;
     private FileSystemWatcher? _indexWatcher;
     private System.Threading.Timer? _debounceTimer;
     private long _watcherStartTicks;
     private string? _configError;
     private readonly object _stateLock = new();
-    private bool _isGenerating;
+    private long _indexChangeVersion;
     private bool _regenerateRequested;
     private bool _buttonsDisabled;
     private IGitModule? _currentModule;
@@ -66,8 +71,7 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
 
     public void Unregister(IGitUICommands gitUiCommands)
     {
-        StopIndexWatcher();
-        CancelPendingWork();
+        CleanUp(gitUiCommands);
         gitUiCommands.PreCommit -= OnPreCommit;
         gitUiCommands.PostCommit -= OnPostCommit;
     }
@@ -98,6 +102,9 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
         {
             return;
         }
+
+        // Generation and its UI updates share the commit dialog's UI thread.
+        _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
 
         //string commitPrefixes = _commitTypesSetting.ValueOrDefault(_host.Settings);
         string customInstructions = _customInstructionsSetting.ValueOrDefault(_host.Settings);
@@ -143,7 +150,14 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
         CancelPendingWork();
         _currentModule = null;
         UnhookTextChanged();
-        SetCommitButtonsEnabled(true);
+        FinishGenerationUi();
+        if (_cancelAiButton is not null)
+        {
+            _cancelAiButton.Click -= OnCancelAiClick;
+            _cancelAiButton.Dispose();
+            _cancelAiButton = null;
+        }
+        _uiContext = null;
         _configError = null;
         _currentProvider = null;
         _currentCustomInstructions = null;
@@ -203,125 +217,209 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
 
     private void StartGeneration(IGitModule module, bool autoFill)
     {
-        lock (_stateLock)
+        _currentModule = module;
+        if (_cancellationTokenSource is not null)
         {
-            _currentModule = module;
-
-            if (_isGenerating)
-            {
-                _regenerateRequested = true;
-                try { _cancellationTokenSource?.Cancel(); } catch { }
-                return;
-            }
-
-            _regenerateRequested = false;
-            _isGenerating = true;
+            _regenerateRequested = true;
+            CancelRequest(_cancellationTokenSource);
+            return;
         }
 
-        // Cancel old work outside lock (CTS.Cancel may invoke callbacks)
-        CancellationTokenSource? oldCts = Interlocked.Exchange(ref _cancellationTokenSource, null);
-        _pendingGeneration = null;
-        if (oldCts is not null)
-        {
-            try { oldCts.Cancel(); } finally { oldCts.Dispose(); }
-        }
-
+        _regenerateRequested = false;
         BeginGeneration(module, autoFill);
     }
 
     private async void BeginGeneration(IGitModule module, bool autoFill)
     {
+        SynchronizationContext uiContext = _uiContext!;
         CancellationTokenSource cts = new();
         _cancellationTokenSource = cts;
         CancellationToken ct = cts.Token;
+        string? message = null;
 
-        if (autoFill && !_buttonsDisabled)
+        try
         {
-            _messageControl ??= FindMessageControl();
-            SetCommitMessage(_messageControl, _generatingMessage.Text);
+            if (autoFill && !_buttonsDisabled)
+            {
+                _messageControl ??= FindMessageControl();
+                _messageBeforeGeneration = _messageControl?.Text ?? string.Empty;
+                if (_messageBeforeGeneration == _triggerText.Text
+                    || _messageBeforeGeneration == CommitMessageGenerator.NoStagedChangesMessage)
+                {
+                    _messageBeforeGeneration = string.Empty;
+                }
+                SetCommitMessage(_messageControl, _generatingMessage.Text);
 
-            _commitButton ??= FindButton("Commit");
-            _commitAndPushButton ??= FindButton("CommitAndPush");
-            _buttonsDisabled = true;
-            SetCommitButtonsEnabled(false);
+                _commitButton ??= FindButton("Commit");
+                _commitAndPushButton ??= FindButton("CommitAndPush");
+                _buttonsDisabled = true;
+                SetCommitButtonsEnabled(false);
+                ShowCancelAiButton();
+            }
+
+            // Snapshot settings before awaiting so an old request never reads a new session's state.
+            ILlmProvider provider = _currentProvider!;
+            string commitTypes = _currentCommitTypes ?? CommitMessageGenerator.DefaultCommitTypes;
+            string customInstructions = _currentCustomInstructions ?? string.Empty;
+            string youTrackUrl = _host.YouTrackUrlSetting.ValueOrDefault(_host.Settings);
+            string youTrackToken = _host.YouTrackTokenSetting.ValueOrDefault(_host.Settings);
+            message = await Task.Run(async () =>
+            {
+                if (!string.IsNullOrWhiteSpace(youTrackToken))
+                {
+                    try
+                    {
+                        string issues = await YouTrackIssueProvider.GetMyAssignedIssuesAsJsonAsync(
+                            string.IsNullOrWhiteSpace(youTrackUrl) ? "https://dev-track.fileforce.jp" : youTrackUrl,
+                            youTrackToken, ct).ConfigureAwait(false);
+                        customInstructions += Environment.NewLine + Environment.NewLine +
+                            "Currently active YouTrack tickets in JSON format (choose the one that fits):" +
+                            Environment.NewLine + issues;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"YouTrack Error: {ex}");
+                    }
+                }
+
+                ct.ThrowIfCancellationRequested();
+                CommitMessageGenerator generator = new(provider, commitTypes, customInstructions);
+                return await GenerateSafeAsync(generator, module, ct).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
         }
-
-        string customInstructions = _currentCustomInstructions ?? string.Empty;
-
-        // ===========
-        // fetch YouTrack issues
-        string youTrackUrl = _host.YouTrackUrlSetting.ValueOrDefault(_host.Settings);
-        if (string.IsNullOrWhiteSpace(youTrackUrl))
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            youTrackUrl = "https://dev-track.fileforce.jp";
+            // Cancellation either starts the queued regeneration or has already restored the UI.
         }
-        string youTrackToken = _host.YouTrackTokenSetting.ValueOrDefault(_host.Settings);
-        if (!string.IsNullOrWhiteSpace(youTrackToken))
+        catch (Exception ex)
+        {
+            message = string.Format(_errorMessage.Text, ex.Message);
+        }
+        finally
         {
             try
             {
-                string youTrackIssuesJson = await YouTrackIssueProvider
-                    .GetMyAssignedIssuesAsJsonAsync(youTrackUrl, youTrackToken).ConfigureAwait(false);
-                customInstructions += Environment.NewLine + Environment.NewLine +
-                                      "Currently active YouTrack tickets in JSON format (choose the one that fits):" +
-                                      Environment.NewLine +
-                                      youTrackIssuesJson;
+                uiContext.Post(_ => CompleteGeneration(cts, autoFill, message), null);
             }
-            catch (Exception ex)
+            catch (InvalidOperationException ex)
             {
-                Debug.WriteLine($"YouTrack Error: {ex}");
+                // The dialog's UI thread may already have shut down.
+                Debug.WriteLine(ex.Message);
+                cts.Dispose();
             }
         }
-        // ===========
+    }
 
-        CommitMessageGenerator generator = new(
-            _currentProvider!,
-            _currentCommitTypes ?? CommitMessageGenerator.DefaultCommitTypes,
-            customInstructions);
-
-        _pendingGeneration = Task.Run(() => GenerateSafeAsync(generator, module, ct), ct);
-
-        if (autoFill)
+    private void CompleteGeneration(CancellationTokenSource cts, bool autoFill, string? message)
+    {
+        // Always invoked on the captured UI context, including work started by a timer.
+        // Cancel detaches the request before restoring editing, so late responses are ignored.
+        try
         {
-            _ = _pendingGeneration.ContinueWith(
-                task =>
+            if (ReferenceEquals(_cancellationTokenSource, cts))
+            {
+                if (!cts.IsCancellationRequested && autoFill && message is not null)
                 {
-                    IGitModule? moduleForRegen = null;
-                    lock (_stateLock)
-                    {
-                        _isGenerating = false;
-
-                        if (_regenerateRequested && _currentModule is not null && _currentProvider is not null)
-                        {
-                            moduleForRegen = _currentModule;
-                            _regenerateRequested = false;
-                            _isGenerating = true;
-                        }
-                    }
-
-                    if (moduleForRegen is not null)
-                    {
-                        BeginGeneration(moduleForRegen, autoFill: true);
-                        return;
-                    }
-
-                    if (task.IsCompletedSuccessfully)
-                    {
-                        string message = task.Result;
-                        _messageControl ??= FindMessageControl();
-                        SetCommitMessage(_messageControl, string.IsNullOrEmpty(message) ? "" : message);
-                    }
-
-                    if (_buttonsDisabled)
-                    {
-                        _buttonsDisabled = false;
-                        SetCommitButtonsEnabled(true);
-                    }
-                },
-                CancellationToken.None,
-                TaskContinuationOptions.None,
-                TaskScheduler.Default);
+                    SetCommitMessage(_messageControl, message);
+                }
+                _cancellationTokenSource = null;
+                bool regenerate = _regenerateRequested;
+                _regenerateRequested = false;
+                if (regenerate && _currentModule is not null && _currentProvider is not null)
+                {
+                    BeginGeneration(_currentModule, autoFill);
+                }
+                else
+                {
+                    FinishGenerationUi();
+                }
+            }
         }
+        finally { cts.Dispose(); }
+    }
+
+    private void ShowCancelAiButton()
+    {
+        if (_commitButton?.Parent is not Control panel)
+        {
+            return;
+        }
+
+        if (_cancelAiButton is null || _cancelAiButton.IsDisposed)
+        {
+            _cancelAiButton = new Button
+            {
+                Name = "CancelAI",
+                Text = _cancelAiText.Text,
+                AutoSize = true,
+                MinimumSize = _commitButton.Size,
+                Size = _commitButton.Size,
+                Margin = _commitAndPushButton?.Margin ?? _commitButton.Margin,
+                Font = _commitButton.Font,
+                BackColor = _commitButton.BackColor,
+                ForeColor = _commitButton.ForeColor,
+                FlatStyle = _commitButton.FlatStyle,
+                UseVisualStyleBackColor = true,
+                TabIndex = panel.Controls.Cast<Control>().Select(c => c.TabIndex).DefaultIfEmpty().Max() + 1,
+            };
+            _cancelAiButton.Click += OnCancelAiClick;
+            panel.Controls.Add(_cancelAiButton);
+        }
+
+        _cancelAiButton.Visible = true;
+
+        // GE sizes this panel once when opening the dialog. Make room for the extra
+        // button when the message panel is at its minimum height.
+        for (Control? ancestor = panel.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ancestor is SplitterPanel { Parent: SplitContainer split } && split.Panel2 == ancestor
+                && split.Orientation == Orientation.Horizontal)
+            {
+                _commitPanelSplitContainer = split;
+                _originalCommitPanelMinSize = split.Panel2MinSize;
+                int availableHeight = split.ClientSize.Height - split.SplitterWidth - split.Panel1MinSize;
+                int requiredHeight = Math.Min(availableHeight,
+                    Math.Max(split.Panel2MinSize, panel.PreferredSize.Height + panel.Margin.Vertical));
+                split.SplitterDistance = Math.Min(split.SplitterDistance,
+                    split.ClientSize.Height - split.SplitterWidth - requiredHeight);
+                split.Panel2MinSize = requiredHeight;
+                break;
+            }
+        }
+    }
+
+    private void OnCancelAiClick(object? sender, EventArgs e)
+    {
+        CancelPendingDebounce();
+        CancelPendingWork();
+        if (_messageControl?.Text == _generatingMessage.Text)
+        {
+            SetCommitMessage(_messageControl, _messageBeforeGeneration);
+        }
+        FinishGenerationUi();
+        _messageControl?.Focus();
+    }
+
+    private void FinishGenerationUi()
+    {
+        if (_buttonsDisabled)
+        {
+            _buttonsDisabled = false;
+            SetCommitButtonsEnabled(true);
+        }
+        if (_cancelAiButton is not null && !_cancelAiButton.IsDisposed)
+        {
+            _cancelAiButton.Visible = false;
+        }
+        if (_commitPanelSplitContainer is not null && !_commitPanelSplitContainer.IsDisposed)
+        {
+            _commitPanelSplitContainer.Panel2MinSize = _originalCommitPanelMinSize;
+        }
+        _commitPanelSplitContainer = null;
     }
 
     private void StartIndexWatcher(IGitModule module)
@@ -338,8 +436,6 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
                 EnableRaisingEvents = true,
             };
 
-            _debounceTimer = new System.Threading.Timer(OnDebounceTimerElapsed, null, Timeout.Infinite, Timeout.Infinite);
-
             _indexWatcher.Changed += OnGitIndexChanged;
             _indexWatcher.Created += OnGitIndexChanged;
             _indexWatcher.Renamed += OnGitIndexRenamed;
@@ -352,16 +448,21 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
 
     private void StopIndexWatcher()
     {
-        Interlocked.Exchange(ref _debounceTimer, null)?.Dispose();
-
-        if (_indexWatcher is not null)
+        FileSystemWatcher? watcher;
+        lock (_stateLock)
         {
-            _indexWatcher.EnableRaisingEvents = false;
-            _indexWatcher.Changed -= OnGitIndexChanged;
-            _indexWatcher.Created -= OnGitIndexChanged;
-            _indexWatcher.Renamed -= OnGitIndexRenamed;
-            _indexWatcher.Dispose();
+            watcher = _indexWatcher;
             _indexWatcher = null;
+            CancelPendingDebounce();
+        }
+
+        if (watcher is not null)
+        {
+            watcher.EnableRaisingEvents = false;
+            watcher.Changed -= OnGitIndexChanged;
+            watcher.Created -= OnGitIndexChanged;
+            watcher.Renamed -= OnGitIndexRenamed;
+            watcher.Dispose();
         }
     }
 
@@ -387,14 +488,48 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
             return;
         }
 
-        System.Threading.Timer? timer = _debounceTimer;
-        timer?.Change(1500, Timeout.Infinite);
+        lock (_stateLock)
+        {
+            if (!ReferenceEquals(sender, _indexWatcher))
+            {
+                return;
+            }
+            long version = Interlocked.Increment(ref _indexChangeVersion);
+            _debounceTimer?.Dispose();
+            _debounceTimer = new System.Threading.Timer(OnDebounceTimerElapsed, version, 1500, Timeout.Infinite);
+        }
     }
 
     private void OnDebounceTimerElapsed(object? state)
     {
-        try { OnGitIndexChangedCore(); }
-        catch (Exception ex) { Debug.WriteLine(ex.Message); }
+        long version = (long)state!;
+        try
+        {
+            _uiContext?.Post(_ =>
+            {
+                if (version != Interlocked.Read(ref _indexChangeVersion))
+                {
+                    return;
+                }
+                try { OnGitIndexChangedCore(); }
+                catch (Exception ex) { Debug.WriteLine(ex.Message); }
+            }, null);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // A queued timer may outlive the dialog's UI thread.
+            Debug.WriteLine(ex.Message);
+        }
+    }
+
+    private void CancelPendingDebounce()
+    {
+        lock (_stateLock)
+        {
+            Interlocked.Increment(ref _indexChangeVersion);
+            _debounceTimer?.Dispose();
+            _debounceTimer = null;
+        }
     }
 
     private void OnGitIndexChangedCore()
@@ -546,18 +681,21 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
 
     private void CancelPendingWork()
     {
-        lock (_stateLock)
-        {
-            _isGenerating = false;
-            _regenerateRequested = false;
-        }
-
-        CancellationTokenSource? old = Interlocked.Exchange(ref _cancellationTokenSource, null);
-        _pendingGeneration = null;
+        _regenerateRequested = false;
+        _currentModule = null;
+        CancellationTokenSource? old = _cancellationTokenSource;
+        _cancellationTokenSource = null;
         if (old is not null)
         {
-            try { old.Cancel(); } finally { old.Dispose(); }
+            // The detached request owns disposal, after its asynchronous work has finished.
+            CancelRequest(old);
         }
+    }
+
+    private static void CancelRequest(CancellationTokenSource cancellation)
+    {
+        try { cancellation.Cancel(); }
+        catch (Exception ex) { Debug.WriteLine(ex.Message); }
     }
 
     private static void MigrateEmptySetting(StringSetting setting, SettingsSource settings)
