@@ -8,6 +8,7 @@ param(
     [int] $ExpectedMajorVersion = 0
 )
 
+$ErrorActionPreference = 'Stop';
 $LatestVersionName = "latest";
 
 function Test-LocalCopy 
@@ -92,16 +93,9 @@ function Find-ArchiveUrlFromGitHub
     }
     else
     {
-        $Releases = Invoke-RestMethod -Uri $BaseUrl;
-        foreach ($Release in $Releases)
-        {
-            if ($Release.tag_name -eq $Version)
-            {
-                Write-Host "Selected release '$($Release.name)'.";
-                $SelectedRelease = $Release;
-                break;
-            }
-        }
+        # Fetch the pinned tag directly; older releases may be beyond the first page.
+        $SelectedRelease = Invoke-RestMethod -Uri "$BaseUrl/tags/$Version";
+        Write-Host "Selected release '$($SelectedRelease.name)'.";
     }
 
     if (!($null -eq $SelectedRelease))
@@ -196,7 +190,7 @@ function Get-Application
 
     Write-Host "Downloading '$ArchiveUrl'...";
 
-    Invoke-WebRequest -Uri $ArchiveUrl -OutFile $FilePath;
+    Invoke-WebRequest -UseBasicParsing -Uri $ArchiveUrl -OutFile $FilePath;
     Expand-Archive $FilePath -DestinationPath $ExtractPath -Force;
     
     Write-Host "Application extracted to '$ExtractPath'.";

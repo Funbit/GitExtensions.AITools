@@ -16,6 +16,8 @@ AI-powered commit message generation for [Git Extensions](https://github.com/git
 
 ## Installation
 
+Version 7.x targets **Git Extensions 7.2.1** and requires the **.NET 10 Desktop Runtime (x64), version 10.0.9 or later 10.x**. Use AI Tools 6.x with Git Extensions 6.x.
+
 Install via [GitExtensions.PluginManager](https://github.com/gitextensions/gitextensions.pluginmanager):
 
 1. Open Git Extensions → **Tools** → **Plugin Manager**

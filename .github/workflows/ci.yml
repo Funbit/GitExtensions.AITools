@@ -15,7 +15,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Determine version
         id: version
@@ -46,7 +46,7 @@ jobs:
             $notes = 'See https://github.com/JBTremblay/gitextensions.aitools/releases'
           }
           # Escape for MSBuild property
-          $notes = $notes -replace '%','%25' -replace ';','%3B'
+          $notes = $notes -replace '%','%25' -replace ';','%3B' -replace '\r\n|\r|\n','%0A'
           echo "notes=$notes" >> $env:GITHUB_OUTPUT
 
       - name: Build
@@ -64,14 +64,28 @@ jobs:
         run: |
           $nupkg = Get-ChildItem src/GitExtensions.AITools/bin/Release/*.nupkg | Select-Object -First 1
           Write-Host "Package: $($nupkg.Name)"
-          $entries = [System.IO.Compression.ZipFile]::OpenRead($nupkg.FullName).Entries | Select-Object -ExpandProperty FullName
-          $entries | ForEach-Object { Write-Host "  $_" }
-          $required = @('GitExtensions.AITools.dll', 'icon-128x128.png', 'README.md')
-          foreach ($file in $required) {
-            if (-not ($entries | Where-Object { $_ -like "*$file" })) {
-              Write-Error "Missing required file: $file"
-              exit 1
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($nupkg.FullName)
+          try {
+            $entries = $archive.Entries | Select-Object -ExpandProperty FullName
+            $entries | ForEach-Object { Write-Host "  $_" }
+            $required = @('lib/GitExtensions.AITools.dll', 'lib/Translation/French.xlf', 'icon-128x128.png', 'docs/README.md')
+            foreach ($file in $required) {
+              if ($file -notin $entries) {
+                throw "Missing required file: $file"
+              }
             }
+            $reader = [System.IO.StreamReader]::new($archive.GetEntry('GitExtensions.AITools.nuspec').Open())
+            try { [xml]$nuspec = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            $dependency = $nuspec.package.metadata.dependencies.dependency
+            if ($dependency.id -ne 'GitExtensions.Extensibility' -or $dependency.version -ne '[7.0.0, 8.0.0)') {
+              throw 'The package must declare compatibility with GitExtensions.Extensibility 7.x.'
+            }
+            $dlls = @($entries | Where-Object { $_ -like '*.dll' })
+            if ($dlls.Count -ne 1 -or $dlls[0] -ne 'lib/GitExtensions.AITools.dll') {
+              throw 'The package must not bundle Git Extensions host assemblies.'
+            }
+          } finally {
+            $archive.Dispose()
           }
           Write-Host "Package validation passed."
 
@@ -97,7 +111,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Push to NuGet
         run: dotnet nuget push *.nupkg -k ${{ secrets.NUGET_PUSH_TOKEN }} -s https://api.nuget.org/v3/index.json --skip-duplicate

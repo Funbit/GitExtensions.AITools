@@ -36,7 +36,7 @@ public class AiCommitMessagePlugin : GitPluginBase, IGitPluginForCommit
         LoadPluginTranslations(AppSettings.CurrentTranslation);
     }
 
-    private void LoadPluginTranslations(string translationName)
+    private void LoadPluginTranslations(string? translationName)
     {
         if (string.IsNullOrEmpty(translationName))
         {

@@ -246,7 +246,7 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
             SetCommitButtonsEnabled(false);
         }
 
-        string customInstructions = _currentCustomInstructions;
+        string customInstructions = _currentCustomInstructions ?? string.Empty;
 
         // ===========
         // fetch YouTrack issues
@@ -283,7 +283,7 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
 
         if (autoFill)
         {
-            _pendingGeneration.ContinueWith(
+            _ = _pendingGeneration.ContinueWith(
                 task =>
                 {
                     IGitModule? moduleForRegen = null;
