@@ -18,6 +18,8 @@ internal static class Program
         Control.CheckForIllegalCrossThreadCalls = true;
         (string Name, Action Test)[] tests =
         [
+            ("Staging after an empty index generates without clearing the placeholder", StageAfterEmptyIndex),
+            ("Staging during dialog startup is not lost", StageDuringStartup),
             ("Completion restores the controls", CompletionRestoresControls),
             ("Provider failures restore the controls", FailureRestoresControls),
             ("Cancel restores the draft and ignores a late response", CancelRestoresDraft),
@@ -58,6 +60,34 @@ internal static class Program
         PumpUntil(() => fixture.Commit.Enabled);
         Check(fixture.Message.Text == "feat: generated message", "Generated message must be applied.");
         Check(fixture.CommitAndPush.Enabled && !fixture.Cancel.Visible, "Completion must restore controls.");
+    }
+
+    private static void StageAfterEmptyIndex()
+    {
+        using Fixture fixture = new();
+        fixture.HasStagedChanges = false;
+        fixture.Start();
+        PumpUntil(() => fixture.Commit.Enabled && fixture.Message.Text == CommitMessageGenerator.NoStagedChangesMessage);
+        Check(fixture.Provider.Requests.Length == 0, "An empty index must not call the AI provider.");
+        fixture.HasStagedChanges = true;
+        SetField(fixture.Feature, "_watcherStartTicks", Environment.TickCount64 - 4000);
+        Invoke(fixture.Feature, "OnGitIndexChanged", fixture.Watcher, new FileSystemEventArgs(WatcherChangeTypes.Changed, "C:\\test", "index"));
+        fixture.WaitForRequests(1);
+        fixture.Provider.Requests[0].Result.SetResult("feat: staged after empty index");
+        PumpUntil(() => fixture.Commit.Enabled);
+        Check(fixture.Message.Text == "feat: staged after empty index", "The old placeholder must not prevent regeneration.");
+    }
+
+    private static void StageDuringStartup()
+    {
+        using Fixture fixture = new();
+        fixture.Message.Text = CommitMessageGenerator.NoStagedChangesMessage;
+        SetField(fixture.Feature, "_watcherStartTicks", Environment.TickCount64);
+        Invoke(fixture.Feature, "OnGitIndexChanged", fixture.Watcher, new FileSystemEventArgs(WatcherChangeTypes.Changed, "C:\\test", "index"));
+        fixture.WaitForRequests(1);
+        fixture.Provider.Requests[0].Result.SetResult("feat: staged immediately");
+        PumpUntil(() => fixture.Commit.Enabled);
+        Check(fixture.Message.Text == "feat: staged immediately", "A stage event during startup must eventually generate a message.");
     }
 
     private static void CancelRestoresDraft()
@@ -250,6 +280,7 @@ internal static class Program
         public TextBox Message { get; } = new() { Multiline = true, Dock = DockStyle.Fill };
         public MemorySettings Settings { get; } = new();
         public ControlledProvider Provider { get; } = new();
+        public bool HasStagedChanges { get; set; } = true;
         public FileSystemWatcher Watcher { get; } = new();
         public CommitMessageFeature Feature { get; }
         public IGitModule Module { get; }
@@ -272,6 +303,7 @@ internal static class Program
             {
                 if (method.Name != "Start") throw new NotSupportedException(method.Name);
                 string output = args![0]!.ToString()!.Contains("--stat") ? "file.txt | 1 +" : "+a staged change";
+                if (!HasStagedChanges) output = string.Empty;
                 StreamReader reader = new(new MemoryStream(Encoding.UTF8.GetBytes(output)));
                 return Stub<IProcess>((member, _) => member.Name switch
                 {

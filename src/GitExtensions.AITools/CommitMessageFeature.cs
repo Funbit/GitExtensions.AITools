@@ -433,12 +433,12 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
             _indexWatcher = new FileSystemWatcher(gitDir, "index*")
             {
                 NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
-                EnableRaisingEvents = true,
             };
 
             _indexWatcher.Changed += OnGitIndexChanged;
             _indexWatcher.Created += OnGitIndexChanged;
             _indexWatcher.Renamed += OnGitIndexRenamed;
+            _indexWatcher.EnableRaisingEvents = true;
         }
         catch (Exception ex)
         {
@@ -481,22 +481,20 @@ internal sealed class CommitMessageFeature : IAiFeature, ITranslate
             return;
         }
 
-        // Ignore index events during the first 3 seconds after watcher start —
-        // GE touches the index during dialog initialization.
-        if (Environment.TickCount64 - Interlocked.Read(ref _watcherStartTicks) < 3000)
-        {
-            return;
-        }
-
         lock (_stateLock)
         {
             if (!ReferenceEquals(sender, _indexWatcher))
             {
                 return;
             }
+
+            // GE touches the index while opening the dialog. Defer events until
+            // initialization settles, but keep real stage changes made in that time.
+            long startupDelay = 3000 - (Environment.TickCount64 - Interlocked.Read(ref _watcherStartTicks));
+            int delay = (int)Math.Max(1500, startupDelay);
             long version = Interlocked.Increment(ref _indexChangeVersion);
             _debounceTimer?.Dispose();
-            _debounceTimer = new System.Threading.Timer(OnDebounceTimerElapsed, version, 1500, Timeout.Infinite);
+            _debounceTimer = new System.Threading.Timer(OnDebounceTimerElapsed, version, delay, Timeout.Infinite);
         }
     }
 
