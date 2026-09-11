@@ -55,6 +55,7 @@ Open **Plugins → AI Tools** in Git Extensions to configure:
 
 - **With auto-fill enabled (default):** The commit message is generated automatically when you stage or unstage files and updates as you go.
 - **With auto-fill disabled:** Select the **"AI: Generate commit message"** template from the commit message dropdown to trigger generation.
+- **Excluded assets:** Files under `wwwroot/*/assets/**` anywhere in the repository are omitted from both the diff summary and file contents sent to AI. The `*` matches one application directory (for example, `sc` or `teams`); all nested asset files are excluded. If only these assets are staged, the AI provider is not called.
 - **To cancel generation:** Click **Cancel AI** at the bottom of the commit button panel. The previous message is restored unless you have already edited it, and late responses are ignored. Auto-fill resumes on the next stage/unstage action; you can also select the AI template to generate again.
 
 ## Building from Source
@@ -81,7 +82,7 @@ To pack as a NuGet package:
 dotnet pack -c Release
 ```
 
-Run the cancellation regression tests (using simulated AI responses and a local YouTrack test server):
+Run the regression tests (requires Git on `PATH`; uses temporary Git repositories, simulated AI responses, and a local YouTrack test server):
 
 ```powershell
 dotnet run --project tests/GitExtensions.AITools.Tests -c Release

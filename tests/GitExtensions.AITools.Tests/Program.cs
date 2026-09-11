@@ -10,7 +10,7 @@ using GitExtensions.Extensibility;
 using GitExtensions.Extensibility.Git;
 using GitExtensions.Extensibility.Settings;
 
-internal static class Program
+internal static partial class Program
 {
     [STAThread]
     private static int Main()
@@ -18,6 +18,8 @@ internal static class Program
         Control.CheckForIllegalCrossThreadCalls = true;
         (string Name, Action Test)[] tests =
         [
+            ("Asset paths are excluded from staged analysis at every repository depth", StagedAssetsAreExcluded),
+            ("Asset-only staged changes do not call the AI provider", AssetOnlyChangesSkipAi),
             ("Staging after an empty index generates without clearing the placeholder", StageAfterEmptyIndex),
             ("Staging during dialog startup is not lost", StageDuringStartup),
             ("Completion restores the controls", CompletionRestoresControls),

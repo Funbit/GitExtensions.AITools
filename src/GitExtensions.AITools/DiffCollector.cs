@@ -7,11 +7,13 @@ namespace GitExtensions.AITools;
 internal static class DiffCollector
 {
     private const string TruncationMessage = "\n[Diff truncated due to length]";
+    // Match wwwroot/<app>/assets at any depth, with exactly one app directory.
+    private const string ExcludedAssetsPathspec = "\":(top,glob,exclude)**/wwwroot/*/assets/**\"";
 
     public static async Task<string> GetStagedDiffAsync(IGitModule module, CancellationToken cancellationToken, int maxLength = 8000)
     {
-        Task<string> statTask = RunGitAsync(module, "diff --cached --stat", cancellationToken);
-        Task<string> diffTask = RunGitAsync(module, "diff --cached", cancellationToken);
+        Task<string> statTask = RunGitAsync(module, $"diff --cached --stat -- {ExcludedAssetsPathspec}", cancellationToken);
+        Task<string> diffTask = RunGitAsync(module, $"diff --cached -- {ExcludedAssetsPathspec}", cancellationToken);
         await Task.WhenAll(statTask, diffTask);
 
         string stat = statTask.Result;
